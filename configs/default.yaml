@@ -1,0 +1,8 @@
+data:
+  directory: data
+  files:
+    sales: sales_train_evaluation.csv
+    calendar: calendar.csv
+    prices: sell_prices.csv
+
+preview_rows: 5
