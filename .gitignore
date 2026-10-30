@@ -1,0 +1,35 @@
+# Local Python and IDE environments
+.venv/
+venv/
+envs/
+.conda/
+.idea/
+.vscode/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Downloaded data and generated experiment outputs
+data/
+datasets/
+checkpoints/
+model_store/
+mlruns/
+mlartifacts/
+logs/
+tmp/
+*.duckdb
+*.duckdb.wal
+*.log
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Test and tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
