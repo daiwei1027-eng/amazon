@@ -4,5 +4,7 @@ data:
     sales: sales_train_evaluation.csv
     calendar: calendar.csv
     prices: sell_prices.csv
-
+  output:
+    directory: processed
+    filename: m5_preview.parquet
 preview_rows: 5
