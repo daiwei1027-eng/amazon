@@ -67,7 +67,7 @@ def main():
     filename = config["data"]["output"]["filename"]
     file_path = output_path / filename
     preview_rows = config["preview_rows"]
-    sales = pl.read_csv(sales_path, n_rows=preview_rows)
+    sales = pl.read_csv(sales_path)
     processed_sales = wide_to_long(sales)
     calendar = pl.read_csv(calendar_path)
     calendar_selected = calendar.select(

@@ -6,5 +6,40 @@ data:
     prices: sell_prices.csv
   output:
     directory: processed
-    filename: m5_preview.parquet
-preview_rows: 5
+    filename: m5_processed_full.parquet
+    exp_sub_filename: m5_exp_sub.parquet
+  sampling:
+    item_counts: 100
+    store_ids: ["CA_1", "CA_2"]
+    seed: 42
+services:
+  minio:
+    host: localhost
+    ports:
+      api: 9000
+      console: 9001
+    secure: false
+    bucket: silver
+    prefix: m5_v1
+
+  mlflow:
+    host: localhost
+    ports:
+      tracking: 5000
+
+  airflow:
+    host: localhost
+    ports:
+      web: 8083
+
+  torchserve:
+    host: localhost
+    ports:
+      inference: 8080
+      management: 8081
+      metrics: 8082
+
+  fastapi:
+    host: localhost
+    ports:
+      api: 8000
