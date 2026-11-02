@@ -66,12 +66,11 @@ def main():
     output_path = data_dir / config["data"]["output"]["directory"]
     filename = config["data"]["output"]["filename"]
     file_path = output_path / filename
-    preview_rows = config["preview_rows"]
     sales = pl.read_csv(sales_path)
     processed_sales = wide_to_long(sales)
     calendar = pl.read_csv(calendar_path)
     calendar_selected = calendar.select(
-        ["d", "date", "wm_yr_wk"]
+        ["d", "date", "wm_yr_wk","wday"]
     )
 
     sales_with_calendar = processed_sales.join(calendar_selected, on="d", how="left", validate="m:1")
