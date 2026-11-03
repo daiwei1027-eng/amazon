@@ -13,12 +13,20 @@ data:
     store_ids: ["CA_1", "CA_2"]
     seed: 42
 split:
-  train : train.parquet
-  valid : valid.parquet
-  test : test.parquet
   train_end: "2016-03-23"
   validation_end: "2016-04-22"
   test_end: "2016-05-22"
+features:
+  directory: feature
+  lags: [1,7,27]
+  windows: [7,14,28]
+  filename: sales_feature.parquet
+train:
+  lookback: 56
+  horizon: 30
+  train_batch_size: 32
+  valid_batch_size: 8
+  epochs: 1
 services:
   minio:
     host: localhost
@@ -27,7 +35,7 @@ services:
       console: 9001
     secure: false
     bucket: silver
-    prefix: m5_v1
+    prefix: feature
 
   mlflow:
     host: localhost

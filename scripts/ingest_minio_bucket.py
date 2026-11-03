@@ -21,12 +21,13 @@ def main():
     bucket = config["services"]["minio"]["bucket"]
     prefix = config["services"]["minio"]["prefix"]
     data_config = config["data"]
-    output_config = data_config["output"]
+    output_config = config["features"]["directory"]
+    filename=config["features"]["filename"]
     file_path = (
             project_root
             / data_config["directory"]
-            / output_config["directory"]
-            / output_config["filename"]
+            / output_config
+            / filename
     )
     target_path = f"{prefix}/{file_path.name}"
     minio_config = config["services"]["minio"]

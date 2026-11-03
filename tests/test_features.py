@@ -1,4 +1,4 @@
-from etc.features import add_calendar_features,add_lag_features
+from etc.features import add_calendar_features,add_lag_features,add_rolling_features
 import polars as pl
 from datetime import date
 def test_add_calendar_features():
@@ -34,4 +34,23 @@ def test_lag_features():
     assert result["lag_2"].to_list() == [
         None, None, 2,  # A
         None, None, 10,  # B
+    ]
+def test_rolling_features():
+    sales = pl.DataFrame({
+        "store_id": ["STORE_1"] * 10,
+        "item_id": ["A"] * 5 + ["B"] * 5,
+        "date": [
+                    date(2026, 10, 27),
+                    date(2026, 10, 28),
+                    date(2026, 10, 29),
+                    date(2026, 10, 30),
+                    date(2026, 10, 31)
+                ] * 2,
+        "units_sold": [2, 4, 6, 8, 10, 10,20,30,40,50],
+    })
+
+    result = add_rolling_features(sales, windows=[3])
+    assert result["rolling_mean_3"].to_list() == 	[None, None, None, 4.0, 6.0,None, None, None, 20.0, 30.0]
+    assert result["rolling_std_3"].to_list() == [
+        None, None, None, 2.0, 2.0,None, None, None, 10.0, 10.0
     ]
