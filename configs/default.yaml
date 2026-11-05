@@ -22,11 +22,24 @@ features:
   windows: [7,14,28]
   filename: sales_feature.parquet
 train:
+  model: lstm
   lookback: 56
   horizon: 30
   train_batch_size: 32
   valid_batch_size: 8
-  epochs: 1
+  epochs: 100
+  criterion: mae
+  patience: 5
+  checkpoint_directory: checkpoints
+  checkpoint_interval: 10
+  season_length: 7
+  lstm:
+    hidden_size: 64
+    num_layers: 1
+  optimizer:
+    lr: 0.001
+    weight_decay: 0.0001
+
 services:
   minio:
     host: localhost

@@ -6,6 +6,28 @@
 
 本项目是公开数据上的学习与复现项目，不包含 Amazon 内部数据，也不代表公司业务结果。
 
+## 项目路线与完成标准
+
+目标是完成算法实验、数据工程、时序建模、MLOps 与可解释结果的闭环，与 RAG/Agent 项目形成互补。后续以[项目路线与验收标准](docs/project-roadmap.md)为准。
+
+```text
+M5 原始数据 → ETL / 特征表 → 防泄漏时间窗口
+           → Naive / Seasonal Naive / ARIMA / LSTM / TFT
+           → 统一指标 / MLflow / 误差切片 / 可复现结果
+```
+
+| 模型 | 比较范围 | 验证 MAE | RMSE | WAPE |
+| --- | --- | ---: | ---: | ---: |
+| Naive | 完整实验子集，200 条序列 | 0.954333 | 待计算 | 待计算 |
+| Seasonal Naive | 同一完整实验子集 | 待实现 | 待实现 | 待实现 |
+| ARIMA | 预先固定的代表序列，另表与其他模型对照 | 待实现 | 待实现 | 待实现 |
+| LSTM | 同一完整实验子集 | 待实现 | 待实现 | 待实现 |
+| TFT | 同一完整实验子集 | 待实现 | 待实现 | 待实现 |
+
+必须完成 LSTM/TFT 训练，至少一个真正使用多变量特征；保存最佳 checkpoint、接入 MLflow，并按品类、训练期销量水平、预测步长分析误差。20–30 小时为未验证的粗略预算，完成首个 LSTM 实验后重新估计。
+
+MinIO 保留现有能力；Optuna 10–20 trials 为推荐扩展，Airflow DAG 可选。FastAPI、TorchServe、K8s、Kafka、Redis 不在完成标准内。满足路线文档的六项冻结条件后转入面试准备。
+
 ## 当前进度
 
 | 环节 | 状态 |
@@ -18,7 +40,9 @@
 | 按标签日期划分 train/valid/test Subset | 已完成，排除跨边界窗口 |
 | 通用训练单轮、评估、fit 与 TensorBoard 接口 | 已实现；当前实测运行的是 Naive 评估分支 |
 | Seasonal Naive、ARIMA、LSTM、TFT | 待实现 |
-| MLflow、Airflow、TorchServe、FastAPI | 已规划端口，尚未在本项目部署 |
+| MLflow | 必须接入，当前尚未实现 |
+| Airflow | 可选，最多一个 DAG；当前尚未实现 |
+| TorchServe、FastAPI | 移出本项目完成标准；已有端口配置不代表须部署 |
 
 目前模型输入只有历史销量。工程特征尚未接入 Dataset；带优化器的训练分支也尚未通过实际可训练模型验证。
 
@@ -82,7 +106,7 @@ Naive 对每条序列取预测起点最后一天的销量，重复为未来 30 �
 
 同日再次运行，使用者报告输入切换为完整特征文件，控制台仍输出 `Naive validation MAE: 0.954333`，完成 25 个验证批次。当前 Dataset 仍只提取历史销量，读取特征文件不代表 Naive 使用了全部特征，因此相同结果符合预期。
 
-目前尚未实现 WAPE、RMSE 和其他模型的比较，不能仅据这一个数字判断模型优劣。
+目前尚未实现 WAPE、RMSE 和其他模型的比较，不能仅据这一个数字判断模型优劣。TFT 或 LSTM 不必胜出；结果以统一评估为准，ARIMA 若只跑代表序列，不与完整子集指标直接排名。
 
 ## 环境与安装
 
@@ -140,7 +164,7 @@ API 为 `localhost:9000`，控制台为 `http://localhost:9001`。在控制台�
 python -m scripts.ingest_minio_bucket
 ```
 
-当前配置的上传目标为 `silver/feature/sales_feature.parquet`，本次尚未核实该新对象的上传结果；较早的 `silver/feature/train_feature.parquet` 上传已确认。原始 CSV 自动入库和训练入口直接读取 MinIO/DuckDB 尚待实现。真实 `.env` 已被 Git 忽略，当前仓库尚未提供 `.env.example`。
+当前配置的上传目标为 `silver/feature/sales_feature.parquet`，本次尚未核实该新对象的上传结果；较早的 `silver/feature/train_feature.parquet` 上传已确认。原始 CSV 自动入库和训练入口直接读取 MinIO/DuckDB 尚未实现，按新范围不作为完成前置条件。真实 `.env` 已被 Git 忽略，当前仓库尚未提供 `.env.example`。
 
 Naive 每次运行会在 `logs/tensorboard/naive_<时间戳>/` 创建独立日志目录，只记录一个 `MAE/valid` 点。启动查看器：
 
@@ -182,6 +206,8 @@ $env:RUN_MINIO_TESTS = $null
 | `scripts/train.py` | Dataset/DataLoader 组装、训练/验证、fit、TensorBoard |
 | `docs/` | 按日期记录完成证据、设计变化和未完成事项 |
 
-下一阶段补充 WAPE/RMSE 与 Seasonal Naive、ARIMA 比较；验证可训练模型的梯度与优化分支，接入 LSTM、最佳 checkpoint、早停和 MLflow；随后开展 TFT 与调参。原计划中的 raw 入库、数据字典、DuckDB、Airflow 和推理服务仍需按阶段补齐。
+接下来先补齐统一指标与 Seasonal Naive，再完成 LSTM 训练、最佳 checkpoint、早停与 MLflow；随后接入多变量输入和 TFT，补充 ARIMA 代表性对照，最后固定方案、评估测试集并完成三类误差切片。调参只使用验证集，HPO 可选。具体任务顺序和冻结条件见[项目路线](docs/project-roadmap.md)。
+
+最终展示页以问题、架构、数据、模型对照和主要发现为先，安装命令放在结果之后。训练结果尚未得到的单元格保留待完成状态，不预设深度模型一定提升。
 
 价格下降暂不直接标记为真实促销。价格空值保留在数据中，尚未形成建模处理策略；未来价格只有在预测时确实已知价格计划的设定下，才可作为未来协变量。
