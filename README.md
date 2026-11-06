@@ -1,118 +1,97 @@
 # Retail Demand Forecasting
 
-基于公开 M5 零售数据复现门店商品级未来 30 天销量预测，重点练习数据清洗、可复现抽样、时间窗口、无未来信息泄漏的评估和模型比较。
+基于公开 M5 Walmart 数据完成门店商品级未来 30 天销量预测，实践数据处理、防泄漏时间划分、PyTorch 建模、实验追踪和结果解释。本项目不包含 Amazon 内部数据，也不代表公司业务收益。
 
-截至 2026-11-03，已跑通全量数据预处理、固定实验子集、MinIO 上传、PyTorch Dataset/DataLoader、Naive 基线评估与 TensorBoard 记录。**Naive 验证 MAE 为 0.954333 件/门店商品/天**。LSTM、TFT 和 MLflow 实验追踪尚未实现。
+截至 **2026-11-06**，已完成两种朴素基线、单变量与 12 特征 LSTM 的训练和验证，接入 TensorBoard、MLflow、最佳模型及周期快照保存。当前多变量 LSTM 的最佳验证 MAE 为 **0.738959**；普通测试为 **27 passed、2 skipped**。TFT、ARIMA 代表性对照、最终测试及误差切片尚待完成。
 
-本项目是公开数据上的学习与复现项目，不包含 Amazon 内部数据，也不代表公司业务结果。
+## 验证结果
 
-## 项目路线与完成标准
+固定 CA_1、CA_2 两家门店的 100 个共同商品，共 200 条序列。在 2016-03-23 一次预测随后 30 天，验证区间为 2016-03-24 至 2016-04-22，共 6,000 个目标值。
 
-目标是完成算法实验、数据工程、时序建模、MLOps 与可解释结果的闭环，与 RAG/Agent 项目形成互补。后续以[项目路线与验收标准](docs/project-roadmap.md)为准。
+| 模型 | 验证 MAE | 验证 RMSE | 验证 WAPE |
+| --- | ---: | ---: | ---: |
+| Naive | 0.954333 | 1.934166 | 96.5273% |
+| Seasonal Naive，周期 7 天 | 0.970167 | 1.862301 | 98.1288% |
+| 单变量 LSTM，受控对照 | 0.754507 | 1.582347 | 76.3156% |
+| 12 特征 LSTM，受控对照 | **0.738959** | **1.529758** | **74.7430%** |
 
-```text
-M5 原始数据 → ETL / 特征表 → 防泄漏时间窗口
-           → Naive / Seasonal Naive / ARIMA / LSTM / TFT
-           → 统一指标 / MLflow / 误差切片 / 可复现结果
-```
+MAE、RMSE 的单位为件/门店商品/天，WAPE 以百分数展示；代码返回比例。以上均为验证结果，最终测试集尚未评估。
 
-| 模型 | 比较范围 | 验证 MAE | RMSE | WAPE |
-| --- | --- | ---: | ---: | ---: |
-| Naive | 完整实验子集，200 条序列 | 0.954333 | 待计算 | 待计算 |
-| Seasonal Naive | 同一完整实验子集 | 待实现 | 待实现 | 待实现 |
-| ARIMA | 预先固定的代表序列，另表与其他模型对照 | 待实现 | 待实现 | 待实现 |
-| LSTM | 同一完整实验子集 | 待实现 | 待实现 | 待实现 |
-| TFT | 同一完整实验子集 | 待实现 | 待实现 | 待实现 |
+两组 LSTM 均使用训练 seed=42、warmup=28、hidden_size=64、1 层、AdamW、学习率 0.001、weight decay 0.0001、MAE、patience=5。训练窗口均为 353,600 个，batch size=32，验证 batch size=8。
 
-必须完成 LSTM/TFT 训练，至少一个真正使用多变量特征；保存最佳 checkpoint、接入 MLflow，并按品类、训练期销量水平、预测步长分析误差。20–30 小时为未验证的粗略预算，完成首个 LSTM 实验后重新估计。
+| LSTM 输入 | Run 名称 | 最佳 epoch | 停止 epoch | 每轮训练耗时，约 |
+| --- | --- | ---: | ---: | --- |
+| 仅销量 | `LSTM_20261106_125457_191257` | 11 | 16 | 27–31 秒 |
+| 12 个历史特征 | `LSTM_20261106_120946_436213` | 13 | 18 | 129–131 秒 |
 
-MinIO 保留现有能力；Optuna 10–20 trials 为推荐扩展，Airflow DAG 可选。FastAPI、TorchServe、K8s、Kafka、Redis 不在完成标准内。满足路线文档的六项冻结条件后转入面试准备。
+本次单 seed、固定验证期的特征组对照中，多变量 MAE 降低约 **2.06%**，RMSE 降低约 **3.32%**，单轮训练耗时约为单变量的 4–5 倍。这支持该特征组在当前设置下有帮助，尚不能证明跨起点稳定性、统计显著性或单个特征的独立贡献。
 
-## 当前进度
+较早的未统一训练 seed/warmup 的 LSTM 运行保留在学习日志中，不混入上述受控对照。更多证据见 [11 月 6 日学习日志](docs/2026-11-06-learning-log.md)。
 
-| 环节 | 状态 |
-| --- | --- |
-| 销量宽转长、日历与周价格关联、日期类型及排序 | 已完成，生成全量 12 列 Parquet |
-| 固定门店与商品抽样、产物读回检查 | 已完成 |
-| MinIO Compose、上传脚本、真实往返集成测试 | 已跑通 |
-| 日历、lag、滚动均值与标准差 | 已生成完整实验子集的 388,200 行、24 列特征文件，相关小表测试通过 |
-| 56 天历史、30 天标签的窗口 Dataset | 已完成 |
-| 按标签日期划分 train/valid/test Subset | 已完成，排除跨边界窗口 |
-| 通用训练单轮、评估、fit 与 TensorBoard 接口 | 已实现；当前实测运行的是 Naive 评估分支 |
-| Seasonal Naive、ARIMA、LSTM、TFT | 待实现 |
-| MLflow | 必须接入，当前尚未实现 |
-| Airflow | 可选，最多一个 DAG；当前尚未实现 |
-| TorchServe、FastAPI | 移出本项目完成标准；已有端口配置不代表须部署 |
+## 数据与特征
 
-目前模型输入只有历史销量。工程特征尚未接入 Dataset；带优化器的训练分支也尚未通过实际可训练模型验证。
+数据来源：[M5 Forecasting Accuracy](https://www.kaggle.com/c/m5-forecasting-accuracy/data) 的公开 Walmart 数据。使用 `sales_train_evaluation.csv`、`calendar.csv`、`sell_prices.csv`；不将与 evaluation 重叠的 `sales_train_validation.csv` 再拼接进来。M5 竞赛预测窗口为 28 天，本项目独立采用 30 天历史留出评估，不直接比较竞赛排行榜分数。
 
-## 数据与实验范围
-
-数据来源为 [M5 Forecasting Accuracy](https://www.kaggle.com/c/m5-forecasting-accuracy/data) 的公开 Walmart 数据。原始文件与生成产物均不提交 Git，使用须遵循数据页面条款。
-
-主要原始输入：
-
-```text
-data/
-  sales_train_evaluation.csv
-  calendar.csv
-  sell_prices.csv
-```
-
-`sales_train_validation.csv` 是同一批序列的较短重叠历史，不能与 evaluation 文件上下拼接；`sample_submission.csv` 是提交模板，没有真实销量标签。M5 原竞赛预测窗口为 28 天，本项目使用历史日期独立评估 30 天预测，不直接对标竞赛排行榜。
-
-| 范围 | 全量处理产物 | 当前实验子集 |
+| 范围 | 全量基础产物 | 当前固定实验子集 |
 | --- | ---: | ---: |
 | 门店 | 10 | CA_1、CA_2 |
 | 不同商品 | 3,049 | 100 个共同商品 |
 | 门店商品序列 | 30,490 | 200 |
 | 每条序列历史 | 1,941 天 | 1,941 天 |
 | 日记录 | 59,181,090 | 388,200 |
-| 当前基础字段 | 12 列 | 12 列 |
+| 基础字段 | 12 列 | 12 列 |
 
-日期覆盖 2011-01-29 至 2016-05-22。商品清单先排序，再使用随机种子 42 抽取；当前包含 FOODS 42 个、HOBBIES 21 个、HOUSEHOLD 37 个。此为简单随机抽样的实际组成，尚未采用分层抽样。
+日期范围为 2011-01-29 至 2016-05-22。抽样候选商品先排序，再使用 sampling seed=42 抽取；当前品类组成为 FOODS 42、HOBBIES 21、HOUSEHOLD 37，属于简单随机抽样。全量预处理产物保留，正式模型实验使用固定子集；没有全量训练效果或耗时的实测结论。
 
-开发设备为 i7-12700KF、约 32 GB 内存和 RTX 5060（8 GB 显存）。考虑本地硬件资源及反复开发、验证、调参的成本，正式实验采用固定子集，同时保留可复用的全量处理结果。评价重点是处理规则、实验边界、可复现性与结果解释；当前没有全量训练耗时或全量模型效果的实测结论。
+本地主要产物：
 
-## 时间窗口与防泄漏规则
+```text
+data/processed/m5_processed_full.parquet
+data/processed/m5_exp_sub.parquet
+data/feature/sales_feature.parquet
+```
 
-完整实验子集与其特征文件均保留全部历史。按门店商品分组，构造 56 天历史输入和随后 30 天销量标签，再按**完整标签窗口的日期**划分样本。
+特征文件为 **388,200 行、24 列**。当前配置已将原先笔误的 lag_27 改为 **lag_28**，并重新生成特征文件。lags 为 `[1, 7, 28]`，rolling windows 为 `[7, 14, 28]`；rolling 先在每条序列内 `shift(1)`，要求完整窗口，标准差使用 `ddof=1`。M5 的 wday=1、2 分别对应周六、周日。
 
-| 集合 | 历史与标签规则 | 窗口数 |
+当前多变量 LSTM 按以下顺序读取历史特征：
+
+```python
+[
+    "units_sold", "sell_price", "is_weekend",
+    "lag_1", "lag_7", "lag_28",
+    "rolling_mean_7", "rolling_std_7",
+    "rolling_mean_14", "rolling_std_14",
+    "rolling_mean_28", "rolling_std_28",
+]
+```
+
+- 原始价格空值保留。在模型的历史输入副本中，`sell_price` 空值填 0，作为价格不可用的占位值；本轮未加入 `price_missing` 特征。
+- 子集中 82,649 条价格空值记录全部对应零销量，且均出现在各序列首次有效价格之前，支持“上架前阶段”的解释；数据本身未提供明确上架状态标签。
+- 通过 28 天 warmup 排除 lag/rolling 历史不完整的输入窗口。单变量对照也使用相同 warmup。
+- 当前未对数值输入做标准化；后续拟合缩放器、填充值或类别词表时，仅使用训练部分。
+- 当前 LSTM 只消费历史区间。未来价格、未来真实销量派生的 lag/rolling、静态类别编码和未来日历输入尚未接入。
+
+## 时间窗口与信息边界
+
+先构造 56 天历史与随后 30 天标签的窗口，再按完整标签窗口的日期划分 Subset。
+
+| 集合 | 标签规则 | warmup=28 的窗口数 |
 | --- | --- | ---: |
-| train | 标签结束日期不晚于 2016-03-23 | 359,200 |
-| valid | 历史为 2016-01-28 至 2016-03-23；标签为 2016-03-24 至 2016-04-22 | 200 |
-| test | 历史为 2016-02-27 至 2016-04-22；标签为 2016-04-23 至 2016-05-22 | 200 |
+| train | 标签末日不晚于 2016-03-23 | 353,600 |
+| valid | 标签首日晚于 2016-03-23，末日不晚于 2016-04-22 | 200 |
+| test | 标签首日晚于 2016-04-22，末日不晚于 2016-05-22 | 200，尚未评估 |
 
-完整 Dataset 有 371,200 个候选窗口，其中 11,600 个标签跨集合边界的窗口被排除。每个验证、测试样本各预测 30 天，因此各有 6,000 个目标值。
+warmup=28 时，完整 Dataset 为 365,600 个候选窗口，排除跨标签边界的 11,600 个后得到上述划分。每条序列最早标签起点为第 84 行（从 0 计数），前 28 天用于生成历史特征，再提供完整的 56 天输入。
 
-- 验证与测试使用预测起点前已发生的历史；历史与前一阶段数据重叠是允许的。
-- 不使用预测起点后的真实销量生成该次预测的输入，不能将验证期每天实际销量依次作为一次 30 天预测的 lag 输入。
-- 训练 DataLoader 打乱的是合法训练窗口顺序，窗口内部时间顺序保持不变；验证不打乱。
-- 目前没有标准化步骤。后续需要拟合的变换只能在实际训练部分拟合。
-- 测试集已划定，尚未用于模型效果评估。
+早期 warmup=0 的实验有 371,200 个候选窗口和 359,200 个训练窗口；固定验证、测试标签区间不变。基线不学习训练参数，对比使用相同验证目标。
 
-早期生成的 train/valid/test 日记录 Parquet 可作为阶段产物保留；当前 `scripts/split_m5.py` 已改为划分 Dataset 索引，不再负责生成这三个文件。
+验证历史为 2016-01-28 至 2016-03-23，测试历史为 2016-02-27 至 2016-04-22。预测起点之前的已知销量可以使用；标签区间的实际销量只用于评估。训练窗口可以打乱，窗口内部时间顺序不变，验证不打乱。模型和特征选择使用验证集，方案固定后才使用测试集。
 
-## 当前基线结果
-
-Naive 对每条序列取预测起点最后一天的销量，重复为未来 30 天预测。使用无可学习参数的 `nn.Module` 接入统一评估接口，不运行优化器或反向传播。
-
-| 模型 | 预测起点 | 验证区间 | 预测值数 | 验证 MAE |
-| --- | --- | --- | ---: | ---: |
-| Naive | 2016-03-23 | 2016-03-24 至 2016-04-22 | 6,000 | 0.954333 |
-
-直接按原始销量核算：绝对误差总和为 5,726，MAE = 5,726 / 6,000。TensorBoard 中的 float32 标量约为 0.954333365，与该结果一致。该值是每个门店商品每日的平均绝对销量误差，不是准确率，也不是最终测试集成绩。
-
-同日再次运行，使用者报告输入切换为完整特征文件，控制台仍输出 `Naive validation MAE: 0.954333`，完成 25 个验证批次。当前 Dataset 仍只提取历史销量，读取特征文件不代表 Naive 使用了全部特征，因此相同结果符合预期。
-
-目前尚未实现 WAPE、RMSE 和其他模型的比较，不能仅据这一个数字判断模型优劣。TFT 或 LSTM 不必胜出；结果以统一评估为准，ARIMA 若只跑代表序列，不与完整子集指标直接排名。
+指标按全部目标累计：MAE 累计绝对误差后除以元素数；RMSE 累计平方误差后统一开方；WAPE 累计绝对误差后除以真实销量绝对值之和，不平均各批次的 RMSE/WAPE。WAPE 分母为零时报告未定义。当前训练 criterion 为 MAE。
 
 ## 环境与安装
 
-当前已核实环境为 Windows x86_64、Python 3.11.18、PyTorch 2.10.0+cu128、NVIDIA 驱动 577.00。CUDA 12.8 GPU 张量运算已通过小型检查。`Dataset` 和 `DataLoader` 包含在 torch 中，不需要额外安装名为 dataset 的包。
-
-新建环境时：
+已用环境为 Windows x86_64、Python 3.11.18、PyTorch 2.10.0+cu128、CUDA 12.8，开发设备为 i7-12700KF、约 32 GB RAM、RTX 5060 8 GB。训练在 Windows Conda 环境中执行；Docker 运行 MinIO 和 MLflow 服务。
 
 ```powershell
 conda create -n amazon python=3.11
@@ -120,59 +99,106 @@ conda activate amazon
 python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` 固定当前实际使用的 Python 直接依赖，包含测试工具；通过额外的 PyTorch 官方 CUDA 12.8 索引安装指定的 `torch==2.10.0+cu128`。Docker Desktop 和容器镜像单独管理。DuckDB、MLflow、TFT 等后续组件接入时再更新依赖。
+`requirements.txt` 固定已实际使用的 Python 直接依赖，包含 **mlflow==3.18.0**，与 Compose 服务版本对应；PyTorch CUDA wheel 使用文件中的额外索引。Docker Desktop 与 GNU Make 单独安装。SQLite 属于 MLflow 服务的存储配置，DuckDB/TFT/ARIMA 相关依赖尚未作为新功能预装。
 
-## 当前可运行的本地流程
+2026-11-06 本地直接依赖版本核对及 `python -m pip check` 均通过，尚未重新创建干净环境验证整套安装流程。
 
-从项目根目录运行。先自行下载并放好上述三个 CSV：
+## 本地运行
+
+从项目根目录执行。首次准备数据时，将三个 CSV 放在 `data/` 下：
 
 ```powershell
 python -m scripts.inspect_m5
 python -m scripts.inspect_m5_scope
 python -m etc.features
-python -m scripts.train
 ```
 
-前三步依次生成全量基础表、固定实验子集及 `data/feature/sales_feature.parquet`。特征文件为 388,200 行、24 列，覆盖全部实验日期。训练入口构造窗口、按配置划分，再运行 Naive 验证分支并打印 MAE；本地评估不依赖 MinIO 服务正在运行。
+已有产物可以直接复用。变更 lag/rolling 配置时，重新生成特征文件，并同步 `features.feature_columns` 中的列名。
 
-关键配置在 `configs/default.yaml`，包括输入输出文件、门店与抽样种子、标签日期边界、历史长度、预测长度、batch size 和 epoch 数。
+关键实验配置位于 `configs/default.yaml`：
 
-训练入口已核对并保存：`scripts/train.py` 按配置中的 `data.directory / features.directory / features.filename` 读取完整的 `data/feature/sales_feature.parquet`。Dataset 当前仍只提取历史销量，因此读取特征文件不会自动启用其中的其他特征。
+| 实验 | `train.model` | `features.feature_columns` | `features.warm_up` |
+| --- | --- | --- | ---: |
+| 单变量 LSTM 对照 | `lstm` | `null` | 28 |
+| 多变量 LSTM | `lstm` | 上述 12 列列表 | 28 |
+| Naive | `naive` | `null` | 可保持 28 |
+| Seasonal Naive | `seasonal_naive` | `null` | 可保持 28 |
 
-工程特征当前尚未作为模型输入。接入多变量模型前，需明确数值列、缺失值与缩放策略；未来标签日期上的 lag/rolling 值不能直接作为一次 30 天预测的未来已知输入。
+基线需要一维销量历史，切换模型时同时切换输入列配置。模型类根据 `input_size` 接收 `[batch,56]` 或 `[batch,56,features]`；标签始终为 `[batch,30]`。
 
-## MinIO 与 TensorBoard
+常用入口已统一到 Makefile：
 
-当前 Compose 只部署 MinIO，使用固定的第三方源码构建镜像 `ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z`，发布来源见 [Coollabs MinIO](https://github.com/coollabsio/minio)。数据通过具名卷 `minio_data` 持久化。
+```powershell
+make help
+make config
+make up
+make health
+make train
+```
 
-在项目根目录自行创建 `.env`，填写实际值：
+`make status` 查看服务状态，`make logs` 查看 MLflow 日志，`make test` 运行普通测试，`make down` 停止服务并移除容器，保留命名卷。直接运行 `make` 显示帮助。Makefile 命令行使用 Tab 缩进。
+
+配置 `train.logs_enable=true` 时，训练需要能访问 MLflow；设为 false 时跳过 MLflow 调用。TensorBoard 仍由现有 writer 独立记录。无 Make 时，训练与测试入口分别为 `python -m scripts.train` 和 `python -m pytest tests -q`。
+
+## 实验记录、保存与恢复
+
+一次训练对应一个 MLflow Run，由 `main` 创建和结束。参数记录包含模型、输入列及顺序、input_size、warmup、日期边界、sampling/training seed、模型与优化器设置；逐轮指标为 `train_mae`、`valid_mae` 等，基线只记录 step=0 的验证指标。
+
+产物位置：
+
+```text
+logs/tensorboard/<模型类名_时间戳>/
+data/<模型类名_时间戳>/checkpoints/best.pt
+data/<模型类名_时间戳>/checkpoints/checkpoint_0001.pt
+```
+
+`fit` 只依据验证指标严格下降更新 best.pt；每隔 10 轮独立保存周期快照，并按 patience=5 早停。开启 MLflow 时，最佳和周期模型上传到该 Run 的 `checkpoints/` 子目录。
+
+**fit 返回停止时最后一轮的 `(train_loss, valid_loss)`，不会自动恢复最佳参数。** 最终评估需要显式加载 best.pt。checkpoint 包含模型、优化器、epoch 与指标；完整断点续训入口、早停历史及随机状态恢复尚未实现。
+
+恢复评估入口：
+
+```powershell
+python -m scripts.reload
+```
+
+运行前先在 `scripts/reload.py` 选择目标 checkpoint，并让 YAML 的输入列、顺序、warmup 和模型结构与那次训练一致。该脚本目前仍需手动指定检查点路径，不是完整的命令行评估工具。
+
+- 单变量对照：`LSTM_20261106_125457_191257/checkpoints/best.pt`，input_size=1，输入列为 null。
+- 多变量对照：`LSTM_20261106_120946_436213/checkpoints/best.pt`，input_size=12，输入列为上面的完整有序列表。
+
+两份模型均已独立加载并在相同验证集上复评 MAE、RMSE、WAPE。仅切换文件路径而沿用另一组输入配置，会产生权重形状不匹配；即使维度相同，特征顺序也需要保持一致。未来应将训练配置快照和数据校验信息一并保存，减少手工切换。
+
+当前 MLflow 已验证参数、逐轮指标和 checkpoint 文件记录。数据内容哈希、完整配置快照、设备等信息尚未全部自动记录；三指标复评目前打印在控制台，未全部写回原 Run。没有将普通 `.pt` artifact 宣称为已注册的 MLflow 模型版本。
+
+## Docker 服务
+
+当前 Compose 包含 MinIO 和 MLflow：
+
+| 服务 | 本机访问地址 | 持久化 |
+| --- | --- | --- |
+| MinIO 数据 API | `127.0.0.1:9000` | `minio_data:/minio_data` |
+| MinIO 管理网页 | [localhost:9001](http://localhost:9001) | 同上 |
+| MLflow 网页及 Tracking API | [localhost:5000](http://localhost:5000) | `mlflow_data:/mlflow_data` |
+
+MinIO 使用 `ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z`，MLflow 使用 `ghcr.io/mlflow/mlflow:v3.18.0-full`。MLflow 的实验元数据位于容器内 `/mlflow_data/mlflow.db`，文件产物位于 `/mlflow_data/experiments_records`。它们都由命名卷持久保存；MinIO 数据与 MLflow 产物当前分别管理。
+
+在根目录自行创建 `.env` 并填写实际值，不提交凭据：
 
 ```dotenv
-MINIO_ROOT_USER=amazon_admin
+MINIO_ROOT_USER=replace_with_your_user
 MINIO_ROOT_PASSWORD=replace_with_your_password
 ```
 
-启动：
+`make health` 检查 MLflow `/health`、MinIO API `/minio/health/ready`，以及 MinIO 管理网页 `/`。这是可达性/就绪检查，文件上传能力另外通过集成测试确认。
 
-```powershell
-docker compose up -d minio
-```
+数据上传入口为 `python -m scripts.ingest_minio_bucket`。当前训练直接读取本地 Parquet；新生成的 lag_28 特征对象是否已同步到 MinIO 尚未核实。raw 自动入库与 DuckDB 不作为当前冻结前置条件。
 
-API 为 `localhost:9000`，控制台为 `http://localhost:9001`。在控制台创建 raw、silver 桶。当前上传入口选择配置中的特征文件；生成 `data/feature/sales_feature.parquet` 后可执行：
-
-```powershell
-python -m scripts.ingest_minio_bucket
-```
-
-当前配置的上传目标为 `silver/feature/sales_feature.parquet`，本次尚未核实该新对象的上传结果；较早的 `silver/feature/train_feature.parquet` 上传已确认。原始 CSV 自动入库和训练入口直接读取 MinIO/DuckDB 尚未实现，按新范围不作为完成前置条件。真实 `.env` 已被 Git 忽略，当前仓库尚未提供 `.env.example`。
-
-Naive 每次运行会在 `logs/tensorboard/naive_<时间戳>/` 创建独立日志目录，只记录一个 `MAE/valid` 点。启动查看器：
+查看 TensorBoard：
 
 ```powershell
 python -m tensorboard.main --logdir logs/tensorboard --port 6006 --host 127.0.0.1
 ```
-
-打开 `http://localhost:6006`。后续可训练模型会逐 epoch 记录 `MAE/train` 与 `MAE/valid`。TensorBoard 曲线记录已接入，MLflow 尚未接入；两者职责分别记录，不混称为已完成的实验平台。
 
 ## 测试
 
@@ -180,34 +206,38 @@ python -m tensorboard.main --logdir logs/tensorboard --port 6006 --host 127.0.0.
 python -m pytest tests -q
 ```
 
-2026-11-03 实测：**13 passed、1 skipped**。包括宽长表、日期转换、固定抽样、日历/lag/rolling 特征和窗口标签边界测试。MinIO 集成测试默认跳过。
+2026-11-06 整理本文时实测：**27 passed、2 skipped**。覆盖数据处理、抽样、日历/lag/rolling、时间边界、单变量/多变量 Dataset、价格输入填充、warmup、未来值修改不影响历史输入，以及一层/两层 LSTM 的输入形状、有限梯度与批次独立性。两层模型当前只有测试覆盖，尚无真实层数对照成绩。
 
-MinIO 已启动时可显式运行真实文件往返测试：
+两个真实服务集成测试默认跳过，显式运行方式：
 
 ```powershell
 $env:RUN_MINIO_TESTS = "1"
-python -m pytest tests/test_ingest.py -v
-$env:RUN_MINIO_TESTS = $null
+python -m pytest tests/test_ingest.py -q
+Remove-Item Env:RUN_MINIO_TESTS
+
+$env:RUN_MLFLOW_TESTS = "1"
+python -m pytest tests/test_mlflow_tracking.py -q
+Remove-Item Env:RUN_MLFLOW_TESTS
 ```
 
-该测试使用独立 tests 桶和唯一对象名，完成小型 Parquet 上传、下载、字节比较与对象清理。最近一次实际通过记录见 2026-11-01 日志，本次没有重新执行。
+MinIO 测试上传、下载、比较并清理自己的测试对象；MLflow 测试会创建 `artifact-check` Run 并上传 README，当前测试不会自动删除该 Run。今天已完成 MLflow 上传及训练记录的真实联调；最近一次 MinIO 真实往返通过记录仍为 11 月 1 日，本次普通回归未重跑外部服务测试。
 
-## 代码入口与后续工作
+## 代码与后续范围
 
 | 文件 | 职责 |
 | --- | --- |
-| `scripts/inspect_m5.py` | 全量原始数据整理与基础 Parquet |
-| `scripts/inspect_m5_scope.py` | 固定范围的共同商品抽样 |
-| `etc/features.py` | 从完整实验子集生成日历、lag、rolling 特征文件 |
-| `etc/dataset.py` | 按序列构造窗口，返回历史与标签张量 |
-| `scripts/split_m5.py` | 按标签日期筛选 Subset 索引 |
-| `etc/losses.py` | MAE 计算及形状检查 |
-| `models/baseline.py` | Naive 前向预测 |
-| `scripts/train.py` | Dataset/DataLoader 组装、训练/验证、fit、TensorBoard |
-| `docs/` | 按日期记录完成证据、设计变化和未完成事项 |
+| `scripts/inspect_m5.py`、`scripts/inspect_m5_scope.py` | 全量预处理与固定抽样 |
+| `etc/features.py`、`etc/dataset.py` | 历史特征生成与窗口张量 |
+| `scripts/create_dataset.py`、`scripts/create_dataloader.py` | 数据装配；对外使用 warm_up，转传 Dataset 的 warmup |
+| `scripts/split_m5.py` | 按完整标签日期划分窗口 |
+| `scripts/train_one_epoch.py`、`scripts/evaluate.py` | 训练、全局指标汇总与验证 |
+| `scripts/train.py` | fit、早停、checkpoint、实验和参数装配 |
+| `scripts/mlflow_tracking.py` | 活动 Run 内的文件上传 |
+| `scripts/reload.py` | 加载选定模型，输出三个验证指标 |
+| `models/baseline.py`、`models/SeasonNaive.py`、`models/lstm.py` | 两种基线和 LSTM |
 
-接下来先补齐统一指标与 Seasonal Naive，再完成 LSTM 训练、最佳 checkpoint、早停与 MLflow；随后接入多变量输入和 TFT，补充 ARIMA 代表性对照，最后固定方案、评估测试集并完成三类误差切片。调参只使用验证集，HPO 可选。具体任务顺序和冻结条件见[项目路线](docs/project-roadmap.md)。
+当前已完成历史多变量输入与同架构特征组对照。下一项为 TFT：定义历史观测、未来已知日历和静态属性三类输入；随后完成 ARIMA 代表性对照、固定方案后的测试与三类误差切片，最后整理展示材料。
 
-最终展示页以问题、架构、数据、模型对照和主要发现为先，安装命令放在结果之后。训练结果尚未得到的单元格保留待完成状态，不预设深度模型一定提升。
+范围仍遵循[项目路线与验收标准](docs/project-roadmap.md)，其阶段起点描述保留 11 月 3 日状态，最新实现以本文和按日学习日志为准。Optuna 与 Airflow 为可选扩展；FastAPI、TorchServe、K8s、Kafka、Redis 不属于冻结前置条件。
 
-价格下降暂不直接标记为真实促销。价格空值保留在数据中，尚未形成建模处理策略；未来价格只有在预测时确实已知价格计划的设定下，才可作为未来协变量。
+当前限制包括单个训练 seed 和验证起点、子集覆盖有限、尚未标准化、完整数据版本自动追踪与断点续训未完成，以及 RMSE 零误差反传和 WAPE 全零训练批次的边界策略尚待处理。当前真实训练统一使用 MAE；最终测试和业务收益均未宣称完成。

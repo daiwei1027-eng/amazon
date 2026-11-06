@@ -13,6 +13,9 @@ torch==2.10.0+cu128
 tensorboard==2.21.0
 tqdm==4.70.1
 
+# Experiment tracking; match the MLflow Docker service version.
+mlflow==3.18.0
+
 # MinIO uploads and integration tests
 minio==7.2.20
 urllib3==2.8.0

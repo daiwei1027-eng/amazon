@@ -18,10 +18,27 @@ split:
   test_end: "2016-05-22"
 features:
   directory: feature
-  lags: [1,7,27]
+  lags: [1,7,28]
   windows: [7,14,28]
   filename: sales_feature.parquet
+  warm_up: 28
+  feature_columns: [
+    "units_sold",
+    "sell_price",
+    "is_weekend",
+    "lag_1",
+    "lag_7",
+    "lag_28",
+    "rolling_mean_7",
+    "rolling_std_7",
+    "rolling_mean_14",
+    "rolling_std_14",
+    "rolling_mean_28",
+    "rolling_std_28",
+]
 train:
+  seed: 42
+  logs_enable: True
   model: lstm
   lookback: 56
   horizon: 30
@@ -54,20 +71,3 @@ services:
     host: localhost
     ports:
       tracking: 5000
-
-  airflow:
-    host: localhost
-    ports:
-      web: 8083
-
-  torchserve:
-    host: localhost
-    ports:
-      inference: 8080
-      management: 8081
-      metrics: 8082
-
-  fastapi:
-    host: localhost
-    ports:
-      api: 8000

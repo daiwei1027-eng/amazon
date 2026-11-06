@@ -2,120 +2,24 @@ import polars as pl
 from pathlib import Path
 import yaml
 import torch
-from torch.utils.data import Dataset, DataLoader
-import tqdm
+import random
+import numpy as np
 from etc.losses import mae_loss,rmse_loss,wape_loss
 from models.baseline import NaiveBaseline
 from models.SeasonNaive import SeasonalNaiveBaseline
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import mlflow
+from scripts.mlflow_tracking import log_artifact_file
 from scripts.split_m5 import split_dataset_by_time
-from etc.dataset import ForecastDataset
 from datetime import date
 from models.lstm import LSTM
-def create_dataset(
-    sales: pl.DataFrame,lookback: int,horizon: int,
-)->Dataset:
-    for name, value in [
-        ("lookback", lookback),
-        ("horizon", horizon),
-    ]:
-        if type(value) is not int:
-            raise TypeError(f"{name} must be an integer")
-        if value <= 0:
-            raise ValueError(f"{name} must be positive")
-    return ForecastDataset(sales,lookback,horizon)
-def create_dataloader(dataset: Dataset, batch_size: int,shuffle:bool) -> DataLoader:
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=0,
-    )
+from scripts.create_dataset import create_dataset
+from scripts.create_dataloader import create_dataloader
+from scripts.train_one_epoch import train_one_epoch
+from scripts.evaluate import evaluate
+from contextlib import nullcontext
 
-def train_one_epoch(
-    model,
-    device,
-    dataloader,
-    criterion,
-    *,
-    optimizer,
-):
-    model.to(device)
-    model.train()
-    total_error = 0.0
-    total_weight = 0.0
-    for past_target, target in tqdm.tqdm(dataloader):
-        past_target = past_target.to(device)
-        target = target.to(device)
-        optimizer.zero_grad()
-        prediction = model(past_target)
-        loss = criterion(prediction, target)
-        loss.backward()
-        optimizer.step()
-        error = prediction.detach() - target.detach()
-
-        if criterion is mae_loss:
-            total_error += error.abs().sum().item()
-            total_weight += target.numel()
-
-        elif criterion is rmse_loss:
-            total_error += error.square().sum().item()
-            total_weight += target.numel()
-
-        elif criterion is wape_loss:
-            total_error += error.abs().sum().item()
-            total_weight += target.detach().abs().sum().item()
-
-        else:
-            raise ValueError("Unsupported criterion")
-    if total_weight == 0:
-        raise ValueError("No targets available or metric denominator is zero")
-
-    result = total_error / total_weight
-    if criterion is rmse_loss:
-        result = result ** 0.5
-
-    return result
-
-def evaluate(model,device,dataloader,criterion):
-    total_error = 0.0
-    total_weight = 0.0
-    model.to(device)
-    model.eval()
-    with torch.no_grad():
-        for past_target, target in tqdm.tqdm(dataloader):
-            past_target = past_target.to(device)
-            target = target.to(device)
-            prediction = model(past_target)
-            if prediction.shape != target.shape:
-                raise ValueError("Shape of prediction and target do not match")
-
-            error = prediction.detach() - target.detach()
-
-            if criterion is mae_loss:
-                total_error += error.abs().sum().item()
-                total_weight += target.numel()
-
-            elif criterion is rmse_loss:
-                total_error += error.square().sum().item()
-                total_weight += target.numel()
-
-            elif criterion is wape_loss:
-                total_error += error.abs().sum().item()
-                total_weight += target.detach().abs().sum().item()
-
-            else:
-                raise ValueError("Unsupported criterion")
-
-        if total_weight == 0:
-            raise ValueError("No targets available or metric denominator is zero")
-
-        result = total_error / total_weight
-        if criterion is rmse_loss:
-            result = result ** 0.5
-
-        return result
 def fit(
     model,
     device,
@@ -125,11 +29,11 @@ def fit(
     epochs: int,
     *,
     optimizer=None,
-
 writer: SummaryWriter | None = None,
         patience: int|None = None,
         checkpoint_path:Path | None = None,
         checkpoint_interval:int|None = None,
+        logs_enable:bool|None = None,
 ):
     metric_name = criterion.__name__.removesuffix("_loss").upper()
     if epochs <= 0:
@@ -156,6 +60,12 @@ writer: SummaryWriter | None = None,
             writer.add_scalar(
                 f"{metric_name}/valid", valid_loss, global_step=0
             )
+        if logs_enable:
+            mlflow.log_metric(
+                key=f"valid_{metric_name.lower()}",
+                value=valid_loss,
+                step=0,
+            )
 
         return None, valid_loss
     best_loss = float("inf")
@@ -169,11 +79,18 @@ writer: SummaryWriter | None = None,
             train_dataloader,
             criterion,
             optimizer=optimizer,
+            logs_enable=logs_enable,
+            epoch_num=epoch+1,
         )
         valid_loss = evaluate(
             model, device, valid_dataloader, criterion
         )
-
+        if logs_enable:
+            mlflow.log_metric(
+                key=f"valid_{metric_name.lower()}",
+                value=valid_loss,
+                step=epoch + 1,
+            )
         if valid_loss < best_loss:
             best_loss = valid_loss
             best_epoch = epoch + 1
@@ -192,6 +109,11 @@ writer: SummaryWriter | None = None,
                     },
                     checkpoint_path / "best.pt",
                 )
+                if logs_enable:
+                    log_artifact_file(
+                        checkpoint_path / "best.pt",
+                        artifact_path="checkpoints",
+                    )
         else:
             bad_epochs += 1
         if writer is not None:
@@ -219,6 +141,11 @@ writer: SummaryWriter | None = None,
                     checkpoint_path / f"checkpoint_{save_index:04d}.pt"
             )
             torch.save(checkpoint, checkpoint_file)
+            if logs_enable :
+                log_artifact_file(
+                    checkpoint_file,
+                    artifact_path="checkpoints",
+                )
         print(
             f"Epoch {epoch + 1}/{epochs} "
             f"train_{metric_name}={train_loss:.6f} "
@@ -240,16 +167,27 @@ def main() -> None:
         config = yaml.safe_load(file)
     data_config = config["data"]
     output_config = data_config["output"]
+    seed = config["train"]["seed"]
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    feature_columns = config["features"]["feature_columns"]
+    input_size = (
+        len(feature_columns)
+        if feature_columns is not None
+        else 1
+    )
     data_dict = project_root / config["data"]["directory"] / config["features"]["directory"]/config["features"]["filename"]
     sales = pl.read_parquet(data_dict)
     lookback = config["train"]["lookback"]
     horizon = config["train"]["horizon"]
+    warm_up=config["features"]["warm_up"]
     train_end = date.fromisoformat(config["split"]["train_end"])
     validation_end = date.fromisoformat(
         config["split"]["validation_end"]
     )
     test_end = date.fromisoformat(config["split"]["test_end"])
-    sales_dataset=create_dataset(sales,lookback,horizon)
+    sales_dataset=create_dataset(sales,lookback,horizon,feature_columns=feature_columns,warm_up=warm_up)
     train_dataset,valid_dataset,test_dataset = split_dataset_by_time(sales_dataset,train_end,validation_end,test_end)
     train_batch_size=config["train"]["train_batch_size"]
     valid_batch_size=config["train"]["valid_batch_size"]
@@ -262,15 +200,15 @@ def main() -> None:
         "rmse": rmse_loss,
         "wape": wape_loss,
     }
-
     criterion = loss_functions[config["train"]["criterion"]]
     season_length=config["train"]["season_length"]
     lstm_num_layers=config["train"]["lstm"]["num_layers"]
     lstm_hidden_size=config["train"]["lstm"]["hidden_size"]
+
     models = {
         "naive": NaiveBaseline(horizon),
         "seasonal_naive": SeasonalNaiveBaseline(horizon, season_length),
-        "lstm":LSTM(horizon=horizon,hidden_size=lstm_hidden_size,num_layers=lstm_num_layers),
+        "lstm":LSTM(horizon=horizon,hidden_size=lstm_hidden_size,num_layers=lstm_num_layers,input_size=input_size),
     }
 
     model = models[config["train"]["model"]].to(device)
@@ -286,22 +224,79 @@ def main() -> None:
     lr = config["train"]["optimizer"]["lr"]
     weight_decay = config["train"]["optimizer"]["weight_decay"]
     optimizer=None
+    logs_enable=config["train"]["logs_enable"]
+    if logs_enable:
+        mlflow_host=config["services"]["mlflow"]["host"]
+        mlflow_port=config["services"]["mlflow"]["ports"]["tracking"]
+        mlflow.set_tracking_uri(f"http://{mlflow_host}:{mlflow_port}")
+        mlflow.set_experiment(f"retail-demand-forecasting")
+
     if config["train"]["model"]=="lstm":
         optimizer=torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
-    with SummaryWriter(log_dir=str(log_dir)) as writer:
-        train_loss, valid_loss = fit(
-            model,
-            device,
-            train_dataloader,
-            valid_dataloader,
-            criterion,
-            epochs=epochs,
-            optimizer=optimizer,
-            writer=writer,
-            checkpoint_path=checkpoint_path,
-            checkpoint_interval=checkpoint_interval,
-            patience=patience,
-        )
+    run_context = (
+        mlflow.start_run(run_name=run_name)
+        if logs_enable
+        else nullcontext()
+    )
+    with run_context:
+        with SummaryWriter(log_dir=str(log_dir)) as writer:
+            params = {
+                "model": model_name,
+                "criterion": criterion.__name__.removesuffix("_loss"),
+                "input_features": ",".join(feature_columns)
+    if feature_columns is not None
+    else "units_sold",
+                "warm_up": warm_up,
+                "input_size":len(feature_columns) if feature_columns is not None else 1,
+                "lookback": lookback,
+                "horizon": horizon,
+                "train_batch_size": train_batch_size,
+                "valid_batch_size": valid_batch_size,
+                "epochs_limit": epochs,
+                "patience": patience,
+                "checkpoint_interval": checkpoint_interval,
+                "optimizer": (
+                    optimizer.__class__.__name__
+                    if optimizer is not None
+                    else "none"
+                ),
+                "data_file": str(data_dict),
+                "train_end": train_end.isoformat(),
+                "validation_end": validation_end.isoformat(),
+                "test_end": test_end.isoformat(),
+                "sampling_seed": config["data"]["sampling"]["seed"],
+                "training_seed": seed,
+            }
+
+            if optimizer is not None:
+                params.update({
+                    "lr": lr,
+                    "weight_decay": weight_decay,
+                })
+
+            if config["train"]["model"] == "lstm":
+                params.update({
+                    "hidden_size": lstm_hidden_size,
+                    "num_layers": lstm_num_layers,
+                })
+            elif config["train"]["model"] == "seasonal_naive":
+                params["season_length"] = season_length
+            if logs_enable:
+                mlflow.log_params(params)
+            train_loss, valid_loss = fit(
+                model,
+                device,
+                train_dataloader,
+                valid_dataloader,
+                criterion,
+                epochs=epochs,
+                optimizer=optimizer,
+                writer=writer,
+                checkpoint_path=checkpoint_path,
+                checkpoint_interval=checkpoint_interval,
+                patience=patience,
+                logs_enable=logs_enable,
+            )
 
     print(f": Valid Loss{valid_loss:.6f}")
 

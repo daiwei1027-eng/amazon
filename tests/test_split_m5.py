@@ -1,7 +1,7 @@
 import  polars as pl
 from datetime import date,timedelta
 from scripts.split_m5 import split_dataset_by_time
-from scripts.train import create_dataset
+from scripts.create_dataset import create_dataset
 def test_split_by_time_boundaries():
     sales = pl.DataFrame({
         "store_id": ["STORE_1"] * 7,
