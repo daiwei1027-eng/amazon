@@ -22,24 +22,10 @@ features:
   windows: [7,14,28]
   filename: sales_feature.parquet
   warm_up: 28
-  feature_columns: [
-    "units_sold",
-    "sell_price",
-    "is_weekend",
-    "lag_1",
-    "lag_7",
-    "lag_28",
-    "rolling_mean_7",
-    "rolling_std_7",
-    "rolling_mean_14",
-    "rolling_std_14",
-    "rolling_mean_28",
-    "rolling_std_28",
-]
 train:
   seed: 42
   logs_enable: True
-  model: lstm
+  model: tft
   lookback: 56
   horizon: 30
   train_batch_size: 32
@@ -51,11 +37,54 @@ train:
   checkpoint_interval: 10
   season_length: 7
   lstm:
+    feature_columns: [
+      "units_sold",
+      "sell_price",
+      "is_weekend",
+      "lag_1",
+      "lag_7",
+      "lag_28",
+      "rolling_mean_7",
+      "rolling_std_7",
+      "rolling_mean_14",
+      "rolling_std_14",
+      "rolling_mean_28",
+      "rolling_std_28",
+      "month",
+      "year_offset",
+      "wday",
+    ]
     hidden_size: 64
     num_layers: 1
   optimizer:
     lr: 0.001
     weight_decay: 0.0001
+  tft:
+    history_observed_features: [
+      "units_sold",
+      "sell_price",
+      "lag_1",
+      "lag_7",
+      "lag_28",
+      "rolling_mean_7",
+      "rolling_std_7",
+      "rolling_mean_14",
+      "rolling_std_14",
+      "rolling_mean_28",
+      "rolling_std_28",
+    ]
+    known_future_features: [
+        "is_weekend",
+        "month",
+        "year_offset",
+        "wday",
+      ]
+    static_features: ["store_id", "item_id"]
+    hidden_size: 64
+    num_layers: 1
+    dropout: 0.0
+    num_heads: 1
+
 
 services:
   minio:

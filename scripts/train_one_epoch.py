@@ -16,7 +16,13 @@ def train_one_epoch(
     total_error = 0.0
     total_weight = 0.0
     for past_target, target in tqdm.tqdm(dataloader):
-        past_target = past_target.to(device)
+        if isinstance(past_target, dict):
+            past_target = {
+                name: tensor.to(device)
+                for name, tensor in past_target.items()
+            }
+        else:
+            past_target = past_target.to(device)
         target = target.to(device)
         optimizer.zero_grad()
         prediction = model(past_target)

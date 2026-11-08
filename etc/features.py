@@ -6,6 +6,9 @@ def add_calendar_features(
 ) -> pl.DataFrame:
     return sales.with_columns(
         pl.col("date").dt.year().alias("year"),
+        (
+                pl.col("date").dt.year() - 2011
+        ).cast(pl.Float32).alias("year_offset"),
         pl.col("date").dt.month().alias("month"),
         pl.col("wday").is_in([1, 2]).alias("is_weekend"),
     )

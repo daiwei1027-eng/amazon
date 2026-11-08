@@ -19,7 +19,8 @@ from scripts.create_dataloader import create_dataloader
 from scripts.train_one_epoch import train_one_epoch
 from scripts.evaluate import evaluate
 from contextlib import nullcontext
-
+from models.tft import TFT
+from etc.tft_dataset import TFTDataset
 def fit(
     model,
     device,
@@ -171,12 +172,18 @@ def main() -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    feature_columns = config["features"]["feature_columns"]
-    input_size = (
-        len(feature_columns)
-        if feature_columns is not None
-        else 1
-    )
+    model_key = config["train"]["model"]
+    feature_column = {
+        "naive": None,
+        "seasonal_naive": None,
+        "lstm": config["train"]["lstm"]["feature_columns"],
+        "tft": (
+                config["train"]["tft"]["history_observed_features"]
+                + config["train"]["tft"]["known_future_features"]
+        ),
+    }
+    feature_columns = feature_column[model_key]
+    input_size = len(feature_columns) if feature_columns is not None else 1
     data_dict = project_root / config["data"]["directory"] / config["features"]["directory"]/config["features"]["filename"]
     sales = pl.read_parquet(data_dict)
     lookback = config["train"]["lookback"]
@@ -187,7 +194,24 @@ def main() -> None:
         config["split"]["validation_end"]
     )
     test_end = date.fromisoformat(config["split"]["test_end"])
-    sales_dataset=create_dataset(sales,lookback,horizon,feature_columns=feature_columns,warm_up=warm_up)
+    history_observed_features = config["train"]["tft"]["history_observed_features"]
+    known_future_features = config["train"]["tft"]["known_future_features"]
+    static_features = config["train"]["tft"]["static_features"]
+    static_mappings = {}
+    for name in static_features:
+        values = sorted(sales[name].unique().to_list())
+        static_mappings[name] = {
+            value: index
+            for index, value in enumerate(values)
+        }
+
+    static_cardinalities = {
+        name: len(mapping)
+        for name, mapping in static_mappings.items()
+    }
+    num_observed=len(history_observed_features)
+    num_future=len(known_future_features)
+    sales_dataset=TFTDataset(sales,lookback,horizon,history_observed_features=history_observed_features,known_future_features=known_future_features,static_mappings=static_mappings,warmup=warm_up)if model_key=="tft" else create_dataset(sales,lookback,horizon,feature_columns=feature_columns,warm_up=warm_up)
     train_dataset,valid_dataset,test_dataset = split_dataset_by_time(sales_dataset,train_end,validation_end,test_end)
     train_batch_size=config["train"]["train_batch_size"]
     valid_batch_size=config["train"]["valid_batch_size"]
@@ -204,11 +228,20 @@ def main() -> None:
     season_length=config["train"]["season_length"]
     lstm_num_layers=config["train"]["lstm"]["num_layers"]
     lstm_hidden_size=config["train"]["lstm"]["hidden_size"]
+    tft_num_layers=config["train"]["tft"]["num_layers"]
+    tft_hidden_size=config["train"]["tft"]["hidden_size"]
 
     models = {
         "naive": NaiveBaseline(horizon),
         "seasonal_naive": SeasonalNaiveBaseline(horizon, season_length),
         "lstm":LSTM(horizon=horizon,hidden_size=lstm_hidden_size,num_layers=lstm_num_layers,input_size=input_size),
+        "tft":TFT(horizon=horizon,
+        num_observed_features=num_observed,
+        num_known_features=num_future,
+        static_cardinalities=static_cardinalities,
+        hidden_size=tft_hidden_size,
+        num_layers=tft_num_layers,
+        )
     }
 
     model = models[config["train"]["model"]].to(device)
@@ -231,7 +264,7 @@ def main() -> None:
         mlflow.set_tracking_uri(f"http://{mlflow_host}:{mlflow_port}")
         mlflow.set_experiment(f"retail-demand-forecasting")
 
-    if config["train"]["model"]=="lstm":
+    if model_key in ("lstm", "tft"):
         optimizer=torch.optim.AdamW(model.parameters(), lr=lr,weight_decay=weight_decay)
     run_context = (
         mlflow.start_run(run_name=run_name)
@@ -247,7 +280,7 @@ def main() -> None:
     if feature_columns is not None
     else "units_sold",
                 "warm_up": warm_up,
-                "input_size":len(feature_columns) if feature_columns is not None else 1,
+                "input_size":input_size,
                 "lookback": lookback,
                 "horizon": horizon,
                 "train_batch_size": train_batch_size,

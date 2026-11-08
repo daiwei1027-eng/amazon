@@ -11,7 +11,13 @@ def evaluate(model,device,dataloader,criterion):
     model.eval()
     with torch.no_grad():
         for past_target, target in tqdm.tqdm(dataloader):
-            past_target = past_target.to(device)
+            if isinstance(past_target, dict):
+                past_target = {
+                    name: tensor.to(device)
+                    for name, tensor in past_target.items()
+                }
+            else:
+                past_target = past_target.to(device)
             target = target.to(device)
             prediction = model(past_target)
             if prediction.shape != target.shape:

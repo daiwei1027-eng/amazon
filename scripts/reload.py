@@ -14,7 +14,7 @@ from datetime import date
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(
-        r"C:\Users\admin\PycharmProjects\amazon\data\LSTM_20261106_125457_191257\checkpoints\best.pt",
+        r"C:\Users\admin\PycharmProjects\amazon\data\LSTM_20261108_092617_264492\checkpoints\best.pt",
         map_location=device,
         weights_only=True,
     )
@@ -32,9 +32,9 @@ def main():
         config["split"]["validation_end"]
     )
     test_end = date.fromisoformat(config["split"]["test_end"])
-    feature_columns = config["features"]["feature_columns"]
-    warm_up = config["features"]["warm_up"]
+    feature_columns = config["train"]["lstm"]["feature_columns"]
     input_size = len(feature_columns) if feature_columns is not None else 1
+    warm_up = config["features"]["warm_up"]
     sales_dataset = create_dataset(
         sales,
         lookback,
